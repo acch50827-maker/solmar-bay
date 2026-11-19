@@ -1,48 +1,52 @@
-// Screenshot scenes for Porto Verde. ?shot=1..4 sets up a fixed, readable scene
-// so the dossier screenshots show the title, driving, a police chase and a mission.
-import { addCrime } from './police.js';
-import { spawnThug } from './combat.js';
+// Adegan screenshot Porto Verde lewat ?shot=1..4.
+import { makeCar } from './vehicles.js';
+import { spawnThugs } from './combat.js';
+import { addWanted, spawnPolice } from './police.js';
+import { startMission } from './missions.js';
 
-export function applyShot(G, shot) {
-  const s = G.city.spots;
-  if (shot === 1) {
-    G.mode = 'title';
-    G.cam.x = 1600; G.cam.y = 1200;
-    G.player.x = s.parkCenter.x; G.player.y = s.parkCenter.y;
+export function applyShot(state, n) {
+  const p = state.player;
+  if (n === 1) {
+    state.mode = 'title';
+    p.x = 1000; p.y = 600;
     return;
   }
-  G.mode = 'playing';
-  if (shot === 2) {
-    // Driving down the main avenue with traffic around.
-    const car = G.cars.find((c) => c.kind === 'parked');
-    if (car) { G.player.car = car; car.kind = 'player'; G.player.x = car.x; G.player.y = car.y; }
-    G.player.car.speed = 320;
-    G.player.car.angle = 0;
-    G.player.car.x = 1000; G.player.car.y = 600;
-    G.player.x = 1000; G.player.y = 600;
-    G.cam.x = 1000; G.cam.y = 600;
-  } else if (shot === 3) {
-    // Three-star chase: police cars closing in on the player's car.
-    const car = G.cars.find((c) => c.kind === 'parked');
-    if (car) { G.player.car = car; car.kind = 'player'; G.player.x = car.x; G.player.y = car.y; }
-    G.player.car.speed = 380;
-    G.player.car.angle = Math.PI / 2;
-    G.player.car.x = 1800; G.player.car.y = 1400;
-    G.player.x = 1800; G.player.y = 1400;
-    G.cam.x = 1800; G.cam.y = 1400;
-    addCrime(G.wanted, 3);
-    for (let i = 0; i < 4; i++) {
-      const a = (i / 4) * Math.PI * 2;
-      G.police.push({ x: 1800 + Math.cos(a) * 320, y: 1400 + Math.sin(a) * 320, angle: a + Math.PI, speed: 300, color: '#2244aa', kind: 'police', hp: 100, dir: 0, targetSpeed: 300, honk: 0 });
+  state.mode = 'play';
+  if (n === 2) {
+    // Dante mengendarai mobil di jalan downtown.
+    const car = makeCar(1400, 1000, 0, '#c0392b');
+    car.speed = 300;
+    state.cars.push(car);
+    p.car = car;
+    p.onFoot = false;
+    p.x = car.x; p.y = car.y; p.angle = 0; p.speed = 300;
+    p.hp = 100;
+    startMission(state, 0);
+  } else if (n === 3) {
+    // Kejar-kejaran: wanted 3, polisi mengepung.
+    const car = makeCar(1800, 1400, -Math.PI / 2, '#2980b9');
+    car.speed = 260;
+    state.cars.push(car);
+    p.car = car;
+    p.onFoot = false;
+    p.x = car.x; p.y = car.y; p.angle = -Math.PI / 2; p.speed = 260;
+    addWanted(state, 3);
+    spawnPolice(state);
+    for (const cop of state.police) {
+      cop.car.x = p.x + (Math.random() < 0.5 ? -260 : 260);
+      cop.car.y = p.y + (Math.random() < 0.5 ? -200 : 200);
     }
-  } else if (shot === 4) {
-    // Rescue mission at the docks, thugs in sight, marker on the HUD.
-    G.mission.index = 3;
-    G.mission.step = 1;
-    G.player.x = 2700; G.player.y = 1980;
-    G.player.angle = 0;
-    G.cam.x = 2800; G.cam.y = 2030;
-    const spots = [[2820, 1980], [2900, 2060], [2760, 2100]];
-    for (const [x, y] of spots) G.thugs.push(spawnThug(x, y));
+    startMission(state, 1);
+  } else if (n === 4) {
+    // Misi brankas: Dante di depan vault, preman menjaga.
+    p.x = 2600; p.y = 1690;
+    p.angle = Math.PI / 2;
+    p.onFoot = true;
+    p.hp = 82;
+    state.cash = 2400;
+    spawnThugs(state, 2600, 1800, 3);
+    startMission(state, 4);
   }
+  state.camera.x = p.x - state.view.w / 2;
+  state.camera.y = p.y - state.view.h / 2;
 }

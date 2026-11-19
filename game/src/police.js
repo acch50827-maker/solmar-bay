@@ -1,54 +1,102 @@
-// The wanted system and the Bay Police. Crimes raise the heat; police cars spawn
-// in proportion to the wanted level, chase the player, ram and (from 3 stars)
-// shoot. Lay low and the heat cools off.
-import { clamp, dist, angleTo, angDiff } from './util.js';
-import { policeCar } from './vehicles.js';
+// Polisi Bay Police + sistem wanted Porto Verde.
+import { WORLD_W, WORLD_H, clamp, dist, angDiff, rand, pick } from './util.js';
+import { makeCar } from './vehicles.js';
+import { sfx, startSiren, stopSiren } from './audio.js';
 
-export function createWanted() {
-  return { level: 0, heat: 0, quiet: 0, shootTimer: 0 };
+export function addWanted(state, n) {
+  state.wanted = clamp(state.wanted + n, 0, 5);
+  state.wantedTimer = 0;
+  if (state.wanted > 0) startSiren();
 }
-export function addCrime(wanted, stars) {
-  wanted.heat = clamp(wanted.heat + stars * 20, 0, 100);
-  wanted.level = clamp(Math.floor(wanted.heat / 20), 0, 5);
-  wanted.quiet = 0;
+
+export function spawnPolice(state) {
+  const want = Math.min(6, 1 + state.wanted);
+  while (state.police.length < want) {
+    const a = rand(0, Math.PI * 2);
+    const d = rand(500, 750);
+    const x = clamp(state.player.x + Math.cos(a) * d, 80, WORLD_W - 80);
+    const y = clamp(state.player.y + Math.sin(a) * d, 80, WORLD_H - 80);
+    const car = makeCar(x, y, Math.atan2(state.player.y - y, state.player.x - x), '#1f3a5f');
+    car.cruise = 300 + state.wanted * 22;
+    car.speed = car.cruise;
+    car.police = true;
+    state.police.push({ car, shootCd: rand(0.5, 1.5), ramCd: 0 });
+  }
 }
-export function updateWanted(wanted, dt, player, police, city, rng, onShoot) {
-  const nearest = police.reduce((m, c) => Math.min(m, dist(player.x, player.y, c.x, c.y)), 1e9);
-  if (nearest > 520) wanted.quiet += dt; else wanted.quiet = 0;
-  if (wanted.level > 0 && wanted.quiet > 9) {
-    wanted.heat = Math.max(0, wanted.heat - 20 * dt);
-    wanted.level = clamp(Math.floor(wanted.heat / 20), 0, 5);
+
+export function updatePolice(state, dt) {
+  if (state.wanted <= 0) {
+    if (state.police.length) { state.police.length = 0; stopSiren(); }
+    return;
   }
-  // Keep the right number of police on the streets.
-  const want = wanted.level * 2;
-  while (police.length < want) {
-    const a = rng() * Math.PI * 2;
-    const d = 650;
-    const x = clamp(player.x + Math.cos(a) * d, 60, city.w - 60);
-    const y = clamp(player.y + Math.sin(a) * d, 60, city.h - 60);
-    police.push(policeCar(x, y, angleTo(x, y, player.x, player.y)));
-  }
-  while (police.length > want) police.pop();
-  // Chase: steer at the player, ram on contact, shoot from 3 stars.
-  wanted.shootTimer -= dt;
-  for (const c of police) {
-    const d = dist(c.x, c.y, player.x, player.y);
-    const wantAngle = angleTo(c.x, c.y, player.x, player.y);
+  spawnPolice(state);
+  const p = state.player;
+  for (const cop of state.police) {
+    const c = cop.car;
+    const d = dist(c.x, c.y, p.x, p.y);
+    const wantAngle = Math.atan2(p.y - c.y, p.x - c.x);
     c.angle += clamp(angDiff(c.angle, wantAngle), -2.4 * dt, 2.4 * dt);
-    const sp = wanted.level >= 4 ? 460 : 380;
-    c.speed += clamp(sp - c.speed, -500 * dt, 400 * dt);
-    const nx = c.x + Math.cos(c.angle) * c.speed * dt;
-    const ny = c.y + Math.sin(c.angle) * c.speed * dt;
-    const hit = city.buildings.some((b) => {
-      const cx = Math.max(b.x, Math.min(nx, b.x + b.w));
-      const cy = Math.max(b.y, Math.min(ny, b.y + b.h));
-      return (nx - cx) ** 2 + (ny - cy) ** 2 < 20 * 20;
-    });
-    if (!hit) { c.x = nx; c.y = ny; } else { c.angle += 1.2 * dt; c.speed *= 0.6; }
-    if (wanted.level >= 3 && d < 420 && wanted.shootTimer <= 0) {
-      wanted.shootTimer = 0.9;
-      onShoot(c, wantAngle + (rng() - 0.5) * 0.35);
+    const targetSpeed = d > 260 ? c.cruise : c.cruise * 0.8;
+    c.speed += clamp(targetSpeed - c.speed, -300 * dt, 220 * dt);
+    c.x = clamp(c.x + Math.cos(c.angle) * c.speed * dt, 20, WORLD_W - 20);
+    c.y = clamp(c.y + Math.sin(c.angle) * c.speed * dt, 20, WORLD_H - 20);
+    // Menabrak pemain.
+    if (d < 42 && cop.ramCd <= 0) {
+      cop.ramCd = 1.1;
+      p.hp = Math.max(0, p.hp - (6 + state.wanted * 2));
+      sfx.crash();
+      state.shake = 0.35;
+      if (p.car) { p.car.speed *= 0.4; p.car.hp -= 8; }
+      else { p.x += Math.cos(c.angle) * 26; p.y += Math.sin(c.angle) * 26; }
+    }
+    cop.ramCd -= dt;
+    // Menembak dari bintang 3.
+    cop.shootCd -= dt;
+    if (state.wanted >= 3 && cop.shootCd <= 0 && d < 520) {
+      cop.shootCd = rand(0.9, 1.6);
+      const spread = rand(-0.12, 0.12);
+      state.bullets.push({
+        x: c.x + Math.cos(c.angle) * 26, y: c.y + Math.sin(c.angle) * 26,
+        vx: Math.cos(wantAngle + spread) * 620, vy: Math.sin(wantAngle + spread) * 620,
+        life: 1.1, fromPolice: true, dmg: 7,
+      });
+      sfx.shot();
     }
   }
+  // Wanted mendingin kalau pemain jauh dari polisi dan tidak berbuat onar.
+  state.wantedTimer += dt;
+  const nearest = state.police.reduce((m, cop) => Math.min(m, dist(cop.car.x, cop.car.y, p.x, p.y)), 9999);
+  if (nearest > 700 && state.wantedTimer > 14) {
+    state.wanted -= 1;
+    state.wantedTimer = 0;
+    if (state.wanted === 0) stopSiren();
+  }
 }
-export function wantedStars(wanted) { return wanted.level; }
+
+// Pemain tertangkap: polisi sangat dekat dan pemain lambat / jalan kaki.
+export function checkBusted(state) {
+  const p = state.player;
+  if (state.wanted <= 0) return false;
+  const speed = Math.abs(p.speed || 0);
+  for (const cop of state.police) {
+    if (dist(cop.car.x, cop.car.y, p.x, p.y) < 34 && speed < 40) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function doBusted(state) {
+  const lost = Math.floor(state.cash * 0.2);
+  state.cash -= lost;
+  state.lastBustedLoss = lost;
+  state.wanted = 0;
+  state.police.length = 0;
+  stopSiren();
+  state.player.hp = 100;
+  state.player.x = 560;
+  state.player.y = 640;
+  if (state.player.car) { state.player.car.speed = 0; state.player.car = null; }
+  state.player.onFoot = true;
+  sfx.busted();
+}

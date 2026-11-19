@@ -1,289 +1,327 @@
-// Porto Verde — game entry point. Wires the city, cars, people, police, combat,
-// missions, sound and rendering into one loop, plus title / pause / busted /
-// complete screens, autosave, and the ?shot= scene presets.
-import { buildCity, onRoad, hitsBuilding } from './city.js';
+// Porto Verde — orkestrasi utama: loop game, kamera, pemain, layar, dan save.
+// Game open-world crime 2D top-down orisinal: Dante Cruz & Lena Ortiz vs Salazar.
+import { WORLD_W, WORLD_H, clamp, dist, rand } from './util.js';
+import { buildCity, moveWithCollision, HOSPITAL } from './city.js';
 import { createInput } from './input.js';
-import { createAudio } from './audio.js';
-import { spawnTraffic, spawnParked, updatePlayerCar, updateTrafficCar, nearestCar } from './vehicles.js';
-import { spawnPeds, updatePeds } from './people.js';
-import { createWanted, addCrime, updateWanted } from './police.js';
-import { fireBullet, updateBullets, updateThugs, updatePickups, dropPickup, spawnThug } from './combat.js';
-import { MISSIONS, createMissionState, updateMission } from './missions.js';
-import { drawWorld, drawHUD, drawMenu } from './render.js';
+import { ensureAudio, sfx } from './audio.js';
+import { spawnPeds, updatePeds, checkPedHit } from './people.js';
+import { spawnTraffic, updateTraffic, updatePlayerCar, nearestStealable, makeCar } from './vehicles.js';
+import { addWanted, updatePolice, checkBusted, doBusted } from './police.js';
+import { firePlayerShot, updateBullets, updatePickups, spawnPickups } from './combat.js';
+import { startMission, updateMission } from './missions.js';
+import { drawWorld, drawHUD, drawMinimap } from './render.js';
 import { applyShot } from './shots.js';
-import { clamp, dist, resolveCircleRect, mulberry32 } from './util.js';
+
+const SAVE_KEY = 'porto-verde-save-v1';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const rng = mulberry32(20261119);
-const city = buildCity();
 const input = createInput(canvas);
-const audio = createAudio();
 
-const G = {
+function fitCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+fitCanvas();
+window.addEventListener('resize', fitCanvas);
+
+buildCity();
+
+const state = {
   mode: 'title',
   time: 0,
-  cash: 0,
-  city,
-  cam: { x: 600, y: 600 },
-  player: { x: city.spots.start.x, y: city.spots.start.y, angle: 0, hp: 100, car: null, fireT: 0 },
-  cars: [], police: [], peds: [], thugs: [], bullets: [], pickups: [], particles: [],
-  wanted: createWanted(),
-  mission: createMissionState(),
-  save: null,
-  shot: new URLSearchParams(location.search).get('shot'),
+  cash: 150,
+  wanted: 0,
+  wantedTimer: 0,
+  kills: 0,
+  fireCd: 0,
+  muzzle: 0,
+  shake: 0,
+  toast: '',
+  toastT: 0,
+  shotsFiredAt: 0,
+  lastBustedLoss: 0,
+  view: { w: canvas.width, h: canvas.height },
+  camera: { x: 0, y: 0 },
+  player: {
+    x: 1000, y: 600, angle: 0, speed: 0, hp: 100,
+    onFoot: true, car: null,
+  },
+  cars: [],
+  peds: [],
+  police: [],
+  thugs: [],
+  bullets: [],
+  pickups: [],
+  missionIdx: 0,
+  mission: null,
   muted: false,
 };
-G.cars = [...spawnTraffic(city, rng, 14), ...spawnParked(city, rng, 10)];
-G.peds = spawnPeds(city, rng, 26);
+
+state.saveGame = function () {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      cash: state.cash,
+      missionIdx: state.missionIdx,
+      hp: state.player.hp,
+    }));
+  } catch (e) {}
+};
 
 function loadSave() {
   try {
-    const raw = localStorage.getItem('porto-verde-save-v1');
-    if (raw) G.save = JSON.parse(raw);
-  } catch (e) { G.save = null; }
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (typeof s.cash === 'number') state.cash = s.cash;
+    if (typeof s.missionIdx === 'number') state.missionIdx = Math.min(s.missionIdx, 4);
+    if (typeof s.hp === 'number') state.player.hp = s.hp;
+  } catch (e) {}
 }
-function writeSave() {
-  try {
-    localStorage.setItem('porto-verde-save-v1', JSON.stringify({
-      cash: G.cash, missionIndex: G.mission.index,
-      x: G.player.x, y: G.player.y,
-    }));
-  } catch (e) { /* storage unavailable */ }
+loadSave();
+
+// Dunia awal: pejalan kaki, lalu lintas, pickup, dan mobil parkir.
+spawnPeds(state, 26);
+spawnTraffic(state, 14);
+spawnPickups(state);
+for (let i = 0; i < 6; i++) {
+  const car = makeCar(rand(200, 3000), rand(200, 2000), rand(0, Math.PI * 2));
+  if (dist(car.x, car.y, state.player.x, state.player.y) > 300) state.cars.push(car);
 }
-function startGame(fresh) {
-  audio.ensure();
-  if (!fresh && G.save) {
-    G.cash = G.save.cash || 0;
-    G.mission.index = Math.min(G.save.missionIndex || 0, MISSIONS.length - 1);
-    G.player.x = G.save.x || city.spots.start.x;
-    G.player.y = G.save.y || city.spots.start.y;
-  } else {
-    G.cash = 0;
-    G.mission = createMissionState();
-    G.player.x = city.spots.start.x;
-    G.player.y = city.spots.start.y;
-  }
-  G.player.hp = 100;
-  G.player.car = null;
-  G.wanted = createWanted();
-  G.police = [];
-  G.thugs = [];
-  G.bullets = [];
-  G.mode = 'playing';
-  audio.click();
+startMission(state, state.missionIdx);
+state.mode = 'title';
+
+// Adegan screenshot ?shot=1..4.
+const shot = new URLSearchParams(location.search).get('shot');
+if (shot) applyShot(state, parseInt(shot, 10) || 1);
+
+function worldMouse() {
+  return {
+    x: input.mouse.x + state.camera.x,
+    y: input.mouse.y + state.camera.y,
+  };
 }
-function burst(x, y, color, n) {
-  for (let i = 0; i < n; i++) {
-    const a = Math.random() * Math.PI * 2;
-    G.particles.push({ x, y, vx: Math.cos(a) * 120, vy: Math.sin(a) * 120, r: 2 + Math.random() * 3, life: 0.5, max: 0.5, color });
-  }
-}
-function onStepEnter() {
-  // Side effects when a new mission step begins.
-  const m = MISSIONS[G.mission.index];
-  if (!m) return;
-  const step = m.steps[G.mission.step];
-  if (!step) return;
-  if (m.id === 'pickup' && G.mission.step === 1) addCrime(G.wanted, 2);
-  if (m.id === 'rescue' && G.mission.step === 1) {
-    for (const [x, y] of [[2820, 1980], [2900, 2060], [2760, 2100]]) G.thugs.push(spawnThug(x, y));
-  }
-  if (m.id === 'vault' && G.mission.step === 2) addCrime(G.wanted, 4);
-}
-let lastStepKey = '0-0';
-function stepKey() { return G.mission.index + '-' + G.mission.step; }
 
 function update(dt) {
-  G.time += dt;
-  const p = G.player;
-  // Aim at the mouse (world space).
-  const wx = G.cam.x - 640 + input.mouse.x;
-  const wy = G.cam.y - 360 + input.mouse.y;
-  if (!p.car) p.angle = Math.atan2(wy - p.y, wx - p.x);
-  // Camera follows the player.
-  G.cam.x = clamp(p.x, 640, city.w - 640);
-  G.cam.y = clamp(p.y, 360, city.h - 360);
-  // Traffic + pedestrians always live.
-  for (const c of G.cars) if (c.kind === 'traffic') updateTrafficCar(c, dt, city, G.cars, Math.random);
-  updatePeds(G.peds, dt, city, G.danger || null);
-  G.danger = null;
-  // Player movement.
-  if (p.car) {
-    const speed01 = updatePlayerCar(p.car, input, dt, city);
-    p.x = p.car.x; p.y = p.car.y; p.angle = p.car.angle;
-    audio.engine(speed01, true);
-    // Running over pedestrians is a crime.
-    for (const ped of G.peds) {
-      if (ped.state !== 'down' && dist(p.x, p.y, ped.x, ped.y) < 26 && Math.abs(p.car.speed) > 120) {
-        ped.state = 'down';
-        addCrime(G.wanted, 1);
-        burst(ped.x, ped.y, '#ff5d5d', 8);
-        audio.thud();
-      }
-    }
-    // Ram police cars.
-    for (let i = G.police.length - 1; i >= 0; i--) {
-      const c = G.police[i];
-      if (dist(p.x, p.y, c.x, c.y) < 40 && Math.abs(p.car.speed) > 200) {
-        c.hp -= 40;
-        p.car.speed *= 0.5;
-        burst(c.x, c.y, '#ffe14d', 10);
-        audio.thud();
-        if (c.hp <= 0) { G.police.splice(i, 1); addCrime(G.wanted, 2); dropPickup(G.pickups, c.x, c.y, 'cash', 100); }
-      }
-    }
-  } else {
-    const run = input.down('ShiftLeft') || input.down('ShiftRight');
-    const sp = (run ? 280 : 185);
-    let mx = (input.down('KeyD') || input.down('ArrowRight') ? 1 : 0) - (input.down('KeyA') || input.down('ArrowLeft') ? 1 : 0);
-    let my = (input.down('KeyS') || input.down('ArrowDown') ? 1 : 0) - (input.down('KeyW') || input.down('ArrowUp') ? 1 : 0);
-    if (mx || my) {
-      const len = Math.hypot(mx, my);
-      p.x += (mx / len) * sp * dt;
-      p.y += (my / len) * sp * dt;
-      for (const b of city.buildings) resolveCircleRect(p, 12, b);
-      p.x = clamp(p.x, 20, city.w - 20);
-      p.y = clamp(p.y, 20, city.h - 20);
-    }
-    audio.engine(0, false);
-    // Shooting.
-    p.fireT -= dt;
-    if (input.mouse.down && p.fireT <= 0) {
-      p.fireT = 0.18;
-      fireBullet(G.bullets, p.x + Math.cos(p.angle) * 16, p.y + Math.sin(p.angle) * 16, p.angle, 'player');
-      audio.shot();
-      G.danger = { x: p.x, y: p.y, radius: 320 };
-    }
+  state.time += dt;
+  state.view.w = canvas.width;
+  state.view.h = canvas.height;
+  if (state.toastT > 0) state.toastT -= dt;
+  if (state.fireCd > 0) state.fireCd -= dt;
+  if (state.muzzle > 0) state.muzzle -= dt;
+  if (state.shotsFiredAt > 0) state.shotsFiredAt -= dt;
+  if (state.shake > 0) state.shake -= dt;
+
+  if (input.wasPressed('p') || input.wasPressed('escape')) {
+    if (state.mode === 'play') state.mode = 'pause';
+    else if (state.mode === 'pause') state.mode = 'play';
   }
-  // Enter / exit car.
-  if (input.wasPressed('KeyE')) {
+  if (input.wasPressed('m')) {
+    state.muted = !state.muted;
+    state.toast = state.muted ? 'Suara mati' : 'Suara hidup';
+    state.toastT = 1.5;
+  }
+
+  if (state.mode === 'title') {
+    if (input.wasPressed('enter') || input.mouse.clicked) {
+      ensureAudio();
+      state.mode = 'play';
+      sfx.click();
+    }
+    updatePeds(state, dt);
+    updateTraffic(state, dt);
+    input.endFrame();
+    return;
+  }
+  if (state.mode === 'pause') {
+    if (input.wasPressed('enter') || input.mouse.clicked) state.mode = 'play';
+    input.endFrame();
+    return;
+  }
+  if (state.mode === 'busted' || state.mode === 'complete') {
+    if (input.wasPressed('enter') || input.mouse.clicked) {
+      if (state.mode === 'busted') {
+        state.mode = 'play';
+        state.player.hp = 100;
+      } else {
+        state.mode = 'title';
+        state.cash = 150;
+        state.missionIdx = 0;
+        startMission(state, 0);
+      }
+    }
+    input.endFrame();
+    return;
+  }
+
+  // Mode play.
+  const p = state.player;
+  const k = input.keys;
+  const wm = worldMouse();
+
+  if (input.wasPressed('e')) {
     if (p.car) {
+      // Keluar mobil.
       const car = p.car;
-      car.kind = 'parked';
       car.speed = 0;
       p.car = null;
-      p.x = car.x + 34; p.y = car.y;
-      audio.click();
+      p.onFoot = true;
+      p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
+      p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 34;
+      p.speed = 0;
+      sfx.click();
     } else {
-      const car = nearestCar(G.cars.filter((c) => c.kind !== 'police'), p.x, p.y, 75);
+      const car = nearestStealable(state);
       if (car) {
-        car.kind = 'player';
         p.car = car;
-        addCrime(G.wanted, 1);
-        audio.click();
+        p.onFoot = false;
+        p.angle = car.angle;
+        addWanted(state, 1);
+        state.toast = 'Mobil dicuri! Wanted naik.';
+        state.toastT = 2;
+        sfx.crash();
       }
     }
   }
-  // Police + wanted.
-  updateWanted(G.wanted, dt, p, G.police, city, Math.random, (c, a) => {
-    fireBullet(G.bullets, c.x, c.y, a, 'police', 560);
-    audio.shot();
-  });
-  audio.siren(G.wanted.level > 0);
-  // Police bumping the player on foot.
-  if (!p.car) {
-    for (const c of G.police) {
-      if (dist(p.x, p.y, c.x, c.y) < 30) {
-        p.hp -= 30 * dt;
-        p.x += Math.sign(p.x - c.x) * 60 * dt;
-        p.y += Math.sign(p.y - c.y) * 60 * dt;
-      }
-    }
-  }
-  // Combat.
-  const events = updateBullets(G.bullets, dt, city, G);
-  for (const ev of events) {
-    if (ev.type === 'spark') burst(ev.x, ev.y, '#ffe14d', 5);
-    if (ev.type === 'pedDown') { addCrime(G.wanted, 1); if (Math.random() < 0.5) dropPickup(G.pickups, ev.x, ev.y, 'cash', 50); }
-    if (ev.type === 'thugDown') { G.mission.kills++; dropPickup(G.pickups, ev.x, ev.y, 'cash', 80); burst(ev.x, ev.y, '#ff5d5d', 10); }
-    if (ev.type === 'copDown') {
-      const i = G.police.findIndex((c) => dist(c.x, c.y, ev.x, ev.y) < 30);
-      if (i >= 0) G.police.splice(i, 1);
-      addCrime(G.wanted, 2);
-      dropPickup(G.pickups, ev.x, ev.y, 'cash', 100);
-    }
-  }
-  updateThugs(G.thugs, dt, p, (x, y, a, from) => { fireBullet(G.bullets, x, y, a, from, 560); audio.shot(); });
-  updatePickups(G.pickups, dt, p, G);
-  // Particles.
-  for (let i = G.particles.length - 1; i >= 0; i--) {
-    const pt = G.particles[i];
-    pt.life -= dt;
-    pt.x += pt.vx * dt; pt.y += pt.vy * dt;
-    if (pt.life <= 0) G.particles.splice(i, 1);
-  }
-  // Missions.
-  const before = G.mission.index;
-  const res = updateMission(G.mission, dt, G);
-  if (stepKey() !== lastStepKey) { lastStepKey = stepKey(); onStepEnter(); }
-  if (res === 'mission' || res === 'all') {
-    audio.jingle();
-    writeSave();
-    if (res === 'all') G.mode = 'complete';
-  } else if (res === 'fail') {
-    G.mission.step = 0; G.mission.timer = 0; G.mission.kills = 0;
-    audio.busted();
-  }
-  // Busted?
-  if (p.hp <= 0 && G.mode === 'playing') {
-    G.mode = 'busted';
-    G.cash = Math.floor(G.cash * 0.8);
-    audio.busted();
-    audio.siren(false);
-  }
-  // Periodic autosave.
-  if (Math.floor(G.time) % 15 === 0 && Math.floor(G.time - dt) % 15 !== 0) writeSave();
-}
 
-function frame(t) {
-  requestAnimationFrame(frame);
-  const dt = Math.min(0.05, (t - (frame.last || t)) / 1000 || 0.016);
-  frame.last = t;
-  if (input.wasPressed('KeyM')) { G.muted = audio.toggleMute(); }
-  if (G.mode === 'title') {
-    if (input.wasPressed('Enter')) startGame(false);
-    if (input.wasPressed('KeyN')) startGame(true);
-    drawWorld(ctx, G);
-    drawMenu(ctx, G);
-  } else if (G.mode === 'paused') {
-    if (input.wasPressed('KeyP') || input.wasPressed('Enter')) G.mode = 'playing';
-    if (input.wasPressed('KeyQ')) { G.mode = 'title'; writeSave(); }
-    drawWorld(ctx, G);
-    drawHUD(ctx, G);
-    drawMenu(ctx, G);
-  } else if (G.mode === 'busted' || G.mode === 'complete') {
-    if (input.wasPressed('Enter')) {
-      if (G.mode === 'busted') {
-        G.player.hp = 100;
-        G.player.x = city.spots.hospital.x; G.player.y = city.spots.hospital.y;
-        G.player.car = null;
-        G.wanted = createWanted();
-        G.police = [];
-        G.mode = 'playing';
-      } else {
-        G.mission = createMissionState();
-        G.mode = 'playing';
-      }
+  if (p.car) {
+    updatePlayerCar(state, dt, input);
+    if (checkPedHit(state, p.car)) {
+      addWanted(state, 1);
+      state.toast = 'Kamu menabrak pejalan kaki!';
+      state.toastT = 2;
     }
-    drawWorld(ctx, G);
-    drawHUD(ctx, G);
-    drawMenu(ctx, G);
   } else {
-    if (input.wasPressed('KeyP') || input.wasPressed('Escape')) G.mode = 'paused';
-    update(dt);
+    // Jalan kaki.
+    const mx = (k['d'] || k['arrowright'] ? 1 : 0) - (k['a'] || k['arrowleft'] ? 1 : 0);
+    const my = (k['s'] || k['arrowdown'] ? 1 : 0) - (k['w'] || k['arrowup'] ? 1 : 0);
+    const len = Math.hypot(mx, my) || 1;
+    const spd = 175;
+    moveWithCollision(p, (mx / len) * spd * dt * (mx || my ? 1 : 0), (my / len) * spd * dt * (mx || my ? 1 : 0), 12);
+    p.speed = (mx || my) ? spd : 0;
+    if (mx || my) p.angle = Math.atan2(my, mx);
+    // Arahkan badan ke mouse saat menembak.
+    if (input.mouse.down || input.mouse.clicked) p.angle = Math.atan2(wm.y - p.y, wm.x - p.x);
   }
-  if (G.mode === 'playing') { drawWorld(ctx, G); drawHUD(ctx, G); }
+
+  if (input.mouse.down || input.mouse.clicked) {
+    firePlayerShot(state, wm.x, wm.y);
+  }
+
+  updatePeds(state, dt);
+  updateTraffic(state, dt);
+  updatePolice(state, dt);
+  updateBullets(state, dt);
+  updatePickups(state, dt);
+  updateMission(state, dt);
+
+  // Mobil pemain rusak parah: meledak, Dante keluar.
+  if (p.car && p.car.hp <= 0) {
+    sfx.crash();
+    state.shake = 0.5;
+    p.car.speed = 0;
+    p.x = p.car.x;
+    p.y = p.car.y;
+    p.car = null;
+    p.onFoot = true;
+    p.hp = Math.max(10, p.hp - 15);
+    state.toast = 'Mobilmu hancur!';
+    state.toastT = 2.5;
+  }
+
+  if (p.hp <= 0 || checkBusted(state)) {
+    doBusted(state);
+    state.mode = 'busted';
+  }
+
+  // Kamera mengikuti pemain, dengan guncangan.
+  const shx = state.shake > 0 ? rand(-6, 6) * state.shake : 0;
+  const shy = state.shake > 0 ? rand(-6, 6) * state.shake : 0;
+  state.camera.x = clamp(p.x - canvas.width / 2 + shx, 0, WORLD_W - canvas.width);
+  state.camera.y = clamp(p.y - canvas.height / 2 + shy, 0, WORLD_H - canvas.height);
+
+  // Autosave berkala.
+  if (Math.floor(state.time * 10) % 100 === 0) state.saveGame();
   input.endFrame();
 }
 
-loadSave();
-if (G.shot) applyShot(G, Number(G.shot));
-requestAnimationFrame(frame);
+function drawOverlay(title, lines, hint) {
+  ctx.fillStyle = 'rgba(8, 12, 20, 0.78)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffe14d';
+  ctx.font = 'bold 54px sans-serif';
+  ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 90);
+  ctx.fillStyle = '#fff';
+  ctx.font = '20px sans-serif';
+  lines.forEach((ln, i) => ctx.fillText(ln, canvas.width / 2, canvas.height / 2 - 40 + i * 32));
+  ctx.fillStyle = '#9ecfff';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText(hint, canvas.width / 2, canvas.height / 2 + 60);
+  ctx.textAlign = 'left';
+}
 
-// Debug hook for headless play-testing (not part of the game UI).
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawWorld(ctx, state);
+  if (state.mode === 'play' || state.mode === 'pause') {
+    drawHUD(ctx, state);
+    drawMinimap(ctx, state);
+  }
+  if (state.mode === 'title') {
+    drawOverlay('PORTO VERDE', [
+      'Dante Cruz kembali ke Porto Verde. Salazar menguasai kota ini.',
+      'Bantu Lena Ortiz merebut kembali pelabuhan — 5 misi, 5 bintang wanted.',
+      'WASD gerak • E curi mobil • Klik kiri tembak • P jeda',
+    ], 'Tekan ENTER atau klik untuk mulai');
+  } else if (state.mode === 'pause') {
+    drawOverlay('JEDA', ['Istirahat dulu, Dante.', 'Uang: $' + state.cash + ' • Misi ' + (state.missionIdx + 1) + '/5'], 'Tekan P atau klik untuk lanjut');
+  } else if (state.mode === 'busted') {
+    drawOverlay('TERTANGKAP!', [
+      'Bay Police menangkapmu. Kamu kehilangan $' + state.lastBustedLoss + ' (20%).',
+      'Kamu bangun di rumah sakit Porto Verde.',
+    ], 'Tekan ENTER untuk lanjut');
+  } else if (state.mode === 'complete') {
+    drawOverlay('PORTO VERDE BEBAS!', [
+      'Semua misi selesai. Salazar kalah, pelabuhan kembali milik rakyat.',
+      'Total hadiah misi: $3.300 • Uangmu sekarang: $' + state.cash,
+    ], 'Tekan ENTER untuk main lagi');
+  }
+}
+
+// Hook debug untuk play-test headless saya sendiri.
 window.__pv = {
-  G,
-  start: (fresh) => startGame(fresh),
-  state: () => ({ mode: G.mode, cash: G.cash, hp: G.player.hp, wanted: G.wanted.level, mission: G.mission.index, step: G.mission.step, x: Math.round(G.player.x), y: Math.round(G.player.y), inCar: !!G.player.car, police: G.police.length, peds: G.peds.length, cars: G.cars.length }),
+  state,
+  snapshot() {
+    return {
+      mode: state.mode,
+      x: Math.round(state.player.x),
+      y: Math.round(state.player.y),
+      inCar: !!state.player.car,
+      wanted: state.wanted,
+      cash: state.cash,
+      hp: Math.round(state.player.hp),
+      missionIdx: state.missionIdx,
+      missionStage: state.mission ? state.mission.stage : -1,
+      cars: state.cars.length,
+      peds: state.peds.length,
+      police: state.police.length,
+      thugs: state.thugs.length,
+      bullets: state.bullets.length,
+    };
+  },
 };
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  try {
+    update(dt);
+    draw();
+  } catch (err) {
+    console.error(err);
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);

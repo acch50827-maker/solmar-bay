@@ -1,56 +1,44 @@
-// Small math + random helpers shared by every Porto Verde module.
+// Utilitas kecil untuk Porto Verde: matematika, RNG, dan helper geometri.
+export const WORLD_W = 3200;
+export const WORLD_H = 2400;
 export const TAU = Math.PI * 2;
+
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 export const lerp = (a, b, t) => a + (b - a) * t;
 export const dist = (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1);
-export const angleTo = (x1, y1, x2, y2) => Math.atan2(y2 - y1, x2 - x1);
+export const rand = (a, b) => a + Math.random() * (b - a);
+export const randi = (a, b) => Math.floor(rand(a, b + 1));
+export const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+export const choice = (arr) => pick(arr);
+
+// Selisih sudut terpendek antara a dan b, dalam [-PI, PI].
 export function angDiff(a, b) {
   let d = (b - a) % TAU;
   if (d > Math.PI) d -= TAU;
   if (d < -Math.PI) d += TAU;
   return d;
 }
+
+// RNG deterministik (mulberry32) supaya tata kota sama di setiap run.
 export function mulberry32(seed) {
   let s = seed >>> 0;
   return function () {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(s ^ (s >>> 15), s | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-export const rand = (rng, a, b) => a + rng() * (b - a);
-export const randi = (rng, a, b) => Math.floor(rand(rng, a, b + 1));
-export const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
-export function pointInRect(x, y, r) {
-  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+
+export function rectHit(ax, ay, ar, b) {
+  return ax + ar > b.x && ax - ar < b.x + b.w && ay + ar > b.y && ay - ar < b.y + b.h;
 }
-// Push a circle (px,py,r) out of a rect; returns true if it overlapped.
-export function resolveCircleRect(p, r, rect) {
-  const cx = clamp(p.x, rect.x, rect.x + rect.w);
-  const cy = clamp(p.y, rect.y, rect.y + rect.h);
-  const dx = p.x - cx, dy = p.y - cy;
-  const d2 = dx * dx + dy * dy;
-  if (d2 >= r * r) return false;
-  if (d2 > 0.0001) {
-    const d = Math.sqrt(d2);
-    p.x = cx + (dx / d) * r;
-    p.y = cy + (dy / d) * r;
-  } else {
-    // Center inside the rect: push out along the smallest penetration.
-    const left = p.x - rect.x, right = rect.x + rect.w - p.x;
-    const top = p.y - rect.y, bottom = rect.y + rect.h - p.y;
-    const m = Math.min(left, right, top, bottom);
-    if (m === left) p.x = rect.x - r;
-    else if (m === right) p.x = rect.x + rect.w + r;
-    else if (m === top) p.y = rect.y - r;
-    else p.y = rect.y + rect.h + r;
-  }
-  return true;
+
+export function fmtMoney(n) {
+  return '$' + Math.floor(n).toLocaleString('en-US');
 }
-export function circleRectHit(x, y, r, rect) {
-  const cx = clamp(x, rect.x, rect.x + rect.w);
-  const cy = clamp(y, rect.y, rect.y + rect.h);
-  const dx = x - cx, dy = y - cy;
-  return dx * dx + dy * dy < r * r;
+
+export function fmtTime(sec) {
+  const s = Math.max(0, Math.ceil(sec));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }

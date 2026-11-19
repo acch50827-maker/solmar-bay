@@ -1,30 +1,37 @@
-// Keyboard + mouse input for Porto Verde.
+// Input keyboard + mouse untuk Porto Verde.
 export function createInput(canvas) {
-  const keys = new Set();
+  const keys = {};
   const mouse = { x: 0, y: 0, down: false, clicked: false };
-  const pressed = new Set(); // edge-triggered keys, consumed by the game
+  const pressed = {};
+
   window.addEventListener('keydown', (e) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
-    if (!keys.has(e.code)) pressed.add(e.code);
-    keys.add(e.code);
+    const k = e.key.toLowerCase();
+    if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
+    if (!keys[k]) pressed[k] = true;
+    keys[k] = true;
   });
-  window.addEventListener('keyup', (e) => keys.delete(e.code));
-  window.addEventListener('blur', () => { keys.clear(); mouse.down = false; });
+  window.addEventListener('keyup', (e) => {
+    keys[e.key.toLowerCase()] = false;
+  });
   canvas.addEventListener('mousemove', (e) => {
     const r = canvas.getBoundingClientRect();
-    mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
-    mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
   });
-  canvas.addEventListener('mousedown', (e) => { mouse.down = true; mouse.clicked = true; });
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) { mouse.down = true; mouse.clicked = true; }
+  });
   window.addEventListener('mouseup', () => { mouse.down = false; });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
   return {
-    keys, mouse, pressed,
-    down(code) { return keys.has(code); },
-    wasPressed(code) {
-      if (pressed.has(code)) { pressed.delete(code); return true; }
-      return false;
+    keys,
+    mouse,
+    // true sekali di frame setelah tombol ditekan.
+    wasPressed(k) { return !!pressed[k.toLowerCase()]; },
+    endFrame() {
+      for (const k in pressed) pressed[k] = false;
+      mouse.clicked = false;
     },
-    endFrame() { pressed.clear(); mouse.clicked = false; },
   };
 }
