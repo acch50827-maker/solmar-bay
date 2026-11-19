@@ -1,17 +1,32 @@
-# solmar-bay
+# Porto Verde
 
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/acch50827-maker/solmar-bay/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/acch50827-maker/solmar-bay/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-Solmar Bay is an original 2D top-down open-world crime game set in a sunny coastal city. Walk the streets on foot or steal a car, dodge traffic and pedestrians, outrun police chases as your wanted level climbs from 0 to 5, and work through five chained missions across the city's districts — Downtown, Marina, Old Town, Harbour Park, Southside and the Works. It has a HUD with a minimap, combat on foot and from a car, a title screen, auto-save in the browser, and synthesized sound. Everything is drawn on canvas with plain JavaScript and no libraries; the game runs offline in a desktop browser, no network and no external assets, and nothing in it is copied from any existing game.
+Porto Verde is an original 2D top-down open-world crime game that runs offline in
+a desktop browser from static files. You are Dante Cruz, a driver fresh out of
+prison, working off a debt to fixer Lena Ortiz across five chained jobs — while
+the Bay Police and the Salazar crew close in.
 
-## What's inside
+## The story
 
-- `game/` — the whole game: `index.html` and the ES modules in `game/src/` (world, traffic, police, missions, rendering, audio, input).
-- `serve.ts` — a tiny static server for local play, standard library only.
-- `main.ts` — hands the game and screenshots to the make.fun grader as a dossier.
-- `screenshots/` — the start screen, driving, a police chase, and a mission.
+Dante did three years for a job that went wrong. On the day he walks out, Lena
+Ortiz is waiting with a list: a package for the Grand Hotel Azul, a pickup that
+turns into a chase, a timed run across three checkpoints, a friend pinned down
+at the docks, and one last vault at Porto Bank. Finish all five and the debt is
+paid — and Porto Verde is his.
+
+## Tips
+
+- **Steal smart.** Every stolen car adds a star. Grab a parked car on a quiet
+  street, not one in front of a patrol car.
+- **Use the minimap.** The yellow marker is your objective; blue dots are
+  police. If the dots close in, cut through the park or the beach.
+- **Lay low to cool off.** Hide where no police car can see you for a few
+  seconds and the stars start to drop.
+- **Bank the cash.** Pick up the green `$` drops from thugs and wrecked police
+  cars — and finish missions, because the rewards are where the money is.
 
 ## Run it
 
@@ -19,20 +34,52 @@ Solmar Bay is an original 2D top-down open-world crime game set in a sunny coast
 node serve.ts
 ```
 
-Then open http://localhost:8080 in a desktop browser. Node 22 or newer is required.
+Then open http://localhost:8080 in a desktop browser. No build step, no network
+requests, no libraries: plain HTML, CSS and JavaScript under `game/`.
 
-## How to play
+## Controls
 
-- **Move:** WASD or arrow keys. While driving, W accelerates and S brakes/reverses, A/D steer.
-- **Enter / exit a car:** E near a car.
-- **Fight:** F to punch; the mouse aims and holding the left button shoots.
-- **Pause:** P or Esc. **Mute:** M. **Load a save:** L.
-- **Wanted level:** causing trouble raises it from 0 to 5; the higher it is, the harder the police chase you. Lay low to cool off.
-- **Missions:** five chained missions, starting from the marker on the map. Your progress and best cash are saved in the browser automatically.
+- **WASD / arrows** — walk, or drive when you are in a car
+- **Mouse** — aim on foot; **Click** — shoot
+- **E** — steal / enter a car, or get out of one
+- **Shift** — run on foot
+- **Space** — handbrake while driving
+- **P** — pause, **M** — mute, **Q** — back to the title screen
 
-## Screenshots
+## What is in the game
 
-See `screenshots/` — the start screen, driving, a police chase, and a mission.
+- **A living coastal city** — Porto Verde, 3200×2400: downtown towers, homes,
+  a central park, a beach and a marina, with traffic and pedestrians.
+- **Cars to steal and drive** — traffic follows the road grid; parked cars wait
+  on the curb. Stealing one raises your wanted level.
+- **Wanted 0–5 stars** — crimes draw the Bay Police. They chase, ram, and shoot
+  from 3 stars up. Lay low and the heat cools off; get caught and you lose 20%
+  of your cash.
+- **Five chained missions** — Paket Pertama, Jemput Lena, Tiga Pos, Selamatkan
+  Tomas and Brankas Pelabuhan, $3,300 in total rewards, ending in a harbor
+  heist and a boat escape.
+- **Combat and pickups** — shoot on foot, fight off Salazar's thugs, grab cash
+  and health.
+- **HUD with a minimap** — cash, health, wanted stars, speed, the mission list
+  and a live minimap with the objective marker and police blips.
+- **Start and save** — title screen, pause, and autosave to localStorage.
+
+## Files
+
+- `game/index.html` — the page and canvas
+- `game/src/main.js` — game loop, modes, save/load
+- `game/src/city.js` — the city: roads, buildings, park, beach, marina
+- `game/src/vehicles.js` — driving physics and traffic
+- `game/src/people.js` — pedestrians
+- `game/src/police.js` — wanted level and police chases
+- `game/src/combat.js` — bullets, thugs, pickups
+- `game/src/missions.js` — the five chained jobs
+- `game/src/render.js` — drawing, HUD, minimap, menus
+- `game/src/audio.js` — synthesized WebAudio sound, no audio files
+- `game/src/input.js` — keyboard and mouse
+- `game/src/shots.js` — the `?shot=` screenshot scenes
+- `game/src/util.js` — math and random helpers
+- `screenshots/` — four real renders of the game
 
 ---
 

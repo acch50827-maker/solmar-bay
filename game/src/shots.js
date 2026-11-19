@@ -1,91 +1,48 @@
-// The screenshot scenes behind ?shot=start|drive|chase|mission. Each one
-// plays the real rules forward from a fresh seeded world, steered by a
-// scripted driver (drive along a road, chase the mission target, keep the
-// police close), so the frame is what real play looks like and the same seed
-// always gives the same frame.
-import { STEP } from './config.js';
-import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Screenshot scenes for Porto Verde. ?shot=1..4 sets up a fixed, readable scene
+// so the dossier screenshots show the title, driving, a police chase and a mission.
+import { addCrime } from './police.js';
+import { spawnThug } from './combat.js';
 
-// Steer a car toward a target: throttle, but ease off to turn sharply —
-// a full-speed U-turn swings wide off the road and into the buildings.
-function driveInput(state, target) {
-  const car = state.player.car;
-  if (!car) return { mx: 0, my: 0, aimAngle: 0 };
-  const dx = target.x - car.x;
-  const dy = target.y - car.y;
-  const want = Math.atan2(dy, dx);
-  let diff = want - car.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  return {
-    accel: Math.abs(diff) > 0.6 ? 0.35 : 1,
-    steer: Math.max(-1, Math.min(1, diff * 2)),
-    aimAngle: want,
-    shoot: false,
-  };
-}
-
-// Walk straight at a target on foot.
-function walkInput(state, target) {
-  const p = state.player;
-  const dx = target.x - p.x;
-  const dy = target.y - p.y;
-  const len = Math.hypot(dx, dy) || 1;
-  return {
-    mx: dx / len,
-    my: dy / len,
-    aimAngle: Math.atan2(dy, dx),
-    shoot: false,
-  };
-}
-
-function putPlayerInParkedCar(state) {
-  const car = state.cars.find((c) => c.kind === 'parked');
-  if (!car) return;
-  car.kind = 'player';
-  state.player.car = car;
-  state.player.x = car.x;
-  state.player.y = car.y;
-}
-
-export function stageShot(name, world) {
-  world.reset();
-  const state = world.state;
-
-  if (name !== 'drive' && name !== 'chase' && name !== 'mission') {
-    // Title: traffic and pedestrians move behind the panel for 5 seconds.
-    for (let i = 0; i < 5 / STEP; i += 1) world.step(STEP, null, true);
-    return { screen: SCREEN_TITLE, best: 0 };
+export function applyShot(G, shot) {
+  const s = G.city.spots;
+  if (shot === 1) {
+    G.mode = 'title';
+    G.cam.x = 1600; G.cam.y = 1200;
+    G.player.x = s.parkCenter.x; G.player.y = s.parkCenter.y;
+    return;
   }
-
-  if (name === 'drive') {
-    // Put the player in a parked car on Downtown's main road and drive east.
-    putPlayerInParkedCar(state);
-    const target = { x: 2400, y: 800 };
-    for (let i = 0; i < 14 / STEP; i += 1) world.step(STEP, driveInput(state, target), false);
-    return { screen: SCREEN_PLAY, best: state.cash };
+  G.mode = 'playing';
+  if (shot === 2) {
+    // Driving down the main avenue with traffic around.
+    const car = G.cars.find((c) => c.kind === 'parked');
+    if (car) { G.player.car = car; car.kind = 'player'; G.player.x = car.x; G.player.y = car.y; }
+    G.player.car.speed = 320;
+    G.player.car.angle = 0;
+    G.player.car.x = 1000; G.player.car.y = 600;
+    G.player.x = 1000; G.player.y = 600;
+    G.cam.x = 1000; G.cam.y = 600;
+  } else if (shot === 3) {
+    // Three-star chase: police cars closing in on the player's car.
+    const car = G.cars.find((c) => c.kind === 'parked');
+    if (car) { G.player.car = car; car.kind = 'player'; G.player.x = car.x; G.player.y = car.y; }
+    G.player.car.speed = 380;
+    G.player.car.angle = Math.PI / 2;
+    G.player.car.x = 1800; G.player.car.y = 1400;
+    G.player.x = 1800; G.player.y = 1400;
+    G.cam.x = 1800; G.cam.y = 1400;
+    addCrime(G.wanted, 3);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      G.police.push({ x: 1800 + Math.cos(a) * 320, y: 1400 + Math.sin(a) * 320, angle: a + Math.PI, speed: 300, color: '#2244aa', kind: 'police', hp: 100, dir: 0, targetSpeed: 300, honk: 0 });
+    }
+  } else if (shot === 4) {
+    // Rescue mission at the docks, thugs in sight, marker on the HUD.
+    G.mission.index = 3;
+    G.mission.step = 1;
+    G.player.x = 2700; G.player.y = 1980;
+    G.player.angle = 0;
+    G.cam.x = 2800; G.cam.y = 2030;
+    const spots = [[2820, 1980], [2900, 2060], [2760, 2100]];
+    for (const [x, y] of spots) G.thugs.push(spawnThug(x, y));
   }
-
-  if (name === 'chase') {
-    putPlayerInParkedCar(state);
-    state.wanted = 3;
-    state.mission.index = 2;
-    state.mission.started = true;
-    state.mission.dialog = 'The Bay Police are onto you. Hit all three checkpoints!';
-    state.mission.dialogTimer = 99;
-    const target = { x: 1600, y: 1200 };
-    for (let i = 0; i < 12 / STEP; i += 1) world.step(STEP, driveInput(state, target), false);
-    return { screen: SCREEN_PLAY, best: state.cash };
-  }
-
-  // Mission: on foot in Harbour Park, walking to Milo, mission 4 active.
-  state.mission.index = 3;
-  state.mission.started = true;
-  state.mission.dialog = 'Your friend Milo is cornered in Harbour Park. Reach him!';
-  state.mission.dialogTimer = 99;
-  state.player.x = 100;
-  state.player.y = 200;
-  const target = { x: 200, y: 200 };
-  for (let i = 0; i < 6 / STEP; i += 1) world.step(STEP, walkInput(state, target), false);
-  return { screen: SCREEN_PLAY, best: state.cash };
 }
