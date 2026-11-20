@@ -1,8 +1,8 @@
 # Porto Verde
 
-[![make.fun](https://make.fun/badge/competition/gta6-01.svg)](https://make.fun/c/gta6-01)
-[![make.fun entry](https://make.fun/badge/entry/acch50827-maker/solmar-bay.svg)](https://make.fun/c/gta6-01)
-[![built with make.fun](https://make.fun/badge/built-with.svg)](https://make.fun)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/acch50827-maker/solmar-bay/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/acch50827-maker/solmar-bay/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 Game open-world crime 2D top-down orisinal: **Porto Verde**. Dante Cruz kembali ke kota pelabuhan Porto Verde yang dikuasai Salazar. Bantu Lena Ortiz merebut kembali kota — 5 misi berantai, kejar-kejaran dengan Bay Police, dan wanted 0–5 bintang.
 
